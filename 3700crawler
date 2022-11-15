@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+from collections import deque
+from urllib.parse import urlparse
+
+DEFAULT_SERVER = "proj5.3700.network"
+DEFAULT_PORT = 443
+BUFFER = 1000000
+CRLF = "\r\n"
+
+# Internal HTTP Response Parse Fields
+BODY = "body"
+STATUS = "status"
+HEADERS = "headers"
+COOKIES = "cookies"
+
+# HTTP Status Codes
+SUCCESS = 200
+MOVED = 301
+REDIRECT = 302
+FORBIDDEN = 403
+NOT_FOUND = 404
+ERROR = 500
+
+
+class Crawler:
+    def __init__(self, args):
+        self.server = args.server
+        self.port = args.port
+        self.username = args.username
+        self.password = args.password
+        self.csrf_token = None
+        self.session_id = None
+        self.__login()
+
+    def __login(self):
+        """ Log in to CCS Fakebook and store CSRF and session tokens. """
+        login_url = f"http://{DEFAULT_SERVER}/accounts/login/?next=/fakebook/"
+        get_login_page_response = self.__get(login_url)
+        print('get login ', get_login_page_response)
+        # Get CSRF token cookie.
+        for cookie in get_login_page_response[COOKIES]:
+            if "csrftoken" in cookie:
+                self.csrf_token = cookie.split("; ")[0].split("=")[1]
+                print(self.csrf_token)
+        assert self.csrf_token is not None, "ERROR: Failed to get CSRF token from login page."
+
+        """# Log in and get session cookie.
+        login_content = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={self.csrf_token}&next="
+        post_login_page_response = self.__post(login_url, login_content)
+
+        for cookie in post_login_page_response[COOKIES]:
+            if "sessionid" in cookie:
+                self.session_id = cookie.split("; ")[0].split("=")[1]
+        assert self.session_id is not None, "ERROR: Failed to get Session ID after login."""
+
+    """def __post(self, url, content):
+        "" Send a HTTP/1.1 POST request. ""
+        assert DEFAULT_SERVER in url, f"ERROR: Crawler should only traverse URLs that point to pages on {HOST}"
+        url = urlparse(url)
+
+        # Create HTTP initial request line and headers.
+        initial_request_line = f"POST {url.path} HTTP/1.1{CRLF}"
+        host = f"Host: {url.netloc}{CRLF}"
+        from_line = f"From: clauss.b@husky.neu.edu{CRLF}"
+        user_agent = f"User-Agent: cs3700-webcrawler/1.0{CRLF}"
+        content_type = f"Content-Type: application/x-www-form-urlencoded{CRLF}"
+        content_length = f"Content-Length: {len(content)}{CRLF}"
+
+        # Add cookies.
+        request = f"{initial_request_line}{host}{from_line}{user_agent}{content_type}{content_length}{CRLF}{content}"
+        cookies = self.__get_cookies()
+        if len(cookies) > 0:
+            cookies = '; '.join(f'{key}={value}' for key, value in cookies.items())
+            cookie_header = f"Cookie: {cookies}{CRLF}"
+            request = f"{initial_request_line}{host}{from_line}{user_agent}{content_type}{content_length}{cookie_header}{CRLF}{content}"
+
+        return self.__send_request(request)"""
+
+    def __get_cookies(self):
+        cookies = dict()
+        if self.csrf_token is not None:
+            cookies["csrftoken"] = self.csrf_token
+        if self.session_id is not None:
+            cookies["sessionid"] = self.session_id
+        return cookies
+
+    def __get(self, url):
+        """ Send a HTTP/1.1 GET request. """
+        assert DEFAULT_SERVER in url, f"ERROR: Crawler should only traverse URLs that point to pages on {DEFAULT_SERVER}"
+        url = urlparse(url)
+        print(url.path)
+
+        # Create HTTP initial request line and headers.
+        initial_request_line = f"GET {url.path} HTTP/1.1{CRLF}"
+        host = f"Host: {url.netloc}{CRLF}"
+
+        # Add cookies.
+        request = f"{initial_request_line}{host}{CRLF}"
+        print('request ', request)
+        cookies = self.__get_cookies()
+        if len(cookies) > 0:
+            cookies = '; '.join(f'{key}={value}' for key, value in cookies.items())
+            cookie_header = f"Cookie: {cookies}{CRLF}"
+            request = f"{initial_request_line}{host}{cookie_header}{CRLF}"
+
+        return self.__send_request(request)
+
+    def __send_request(self, request):
+        """ Send HTTP request and return parsed response. """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((DEFAULT_SERVER, DEFAULT_PORT))
+        sock.send(request.encode())
+        response_data = sock.recv(BUFFER).decode()
+        sock.close()
+        return self.__parse_http_response(response_data)
+
+    def __parse_http_response(self, data):
+        """ Parse raw HTTP response. """
+        data = data.strip().split(2 * CRLF)
+        response = dict()
+        response[BODY] = data[-1] if len(data) > 1 else None
+        status_and_headers = data[0].split(CRLF)
+
+        initial_response_line = status_and_headers[0]
+        status = int(initial_response_line.split(" ")[1])
+        response[STATUS] = status
+
+        response[HEADERS] = dict()
+        response[COOKIES] = list()
+        headers = status_and_headers[1:]
+        for header in headers:
+            (key, value) = header.split(": ")
+            if key == "Set-Cookie":
+                response[COOKIES].append(value)
+            else:
+                response[HEADERS][key] = value
+        print(response)
+        return response
+
+    def run(self):
+        request = "GET / HTTP/1.0\r\n\r\n"
+
+        print("Request to %s:%d" % (self.server, self.port))
+        print(request)
+        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        mysocket.connect((self.server, self.port))
+        mysocket.send(request.encode('ascii'))
+
+        data = mysocket.recv(1000)
+        print("Response:\n%s" % data.decode('ascii'))
+
+    """def crawl(self):
+        secret_flags = list()
+        root_page_url = f"http://{DEFAULT_SERVER}/fakebook/"
+        unvisited_pages = deque()
+        unvisited_pages.append(root_page_url)
+        visisted_pages = set()
+
+        while len(unvisited_pages) > 0:
+            next_page_url = unvisited_pages.popleft()
+
+            try:
+                get_page_response = self.__get(next_page_url)
+                # Mark page as visited.
+                visisted_pages.add(next_page_url)"""
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='crawl Fakebook')
+    parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
+    parser.add_argument('-p', dest="port", type=int, default=DEFAULT_PORT, help="The port to use")
+    parser.add_argument('username', type=str, help="The username to use")
+    parser.add_argument('password', type=str, help="The password to use")
+    args = parser.parse_args()
+    sender = Crawler(args)
+    sender.run()
