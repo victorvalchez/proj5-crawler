@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import socket
+import ssl
 import sys
 
 from collections import deque
@@ -9,8 +10,8 @@ from urllib.parse import urlparse
 
 ##########################################################################
 
-HOST = "fring.ccs.neu.edu"
-PORT = 80
+HOST = "proj5.3700.network"
+PORT = 443
 BUFFER = 1000000
 CRLF = "\r\n"
 
@@ -22,11 +23,11 @@ COOKIES = "cookies"
 
 # HTTP Status Codes
 SUCCESS = 200
-MOVED = 301
+FOUND = 302
 REDIRECT = 302
 FORBIDDEN = 403
 NOT_FOUND = 404
-ERROR = 500
+ERROR = 503
 
 ##########################################################################
 
@@ -114,7 +115,8 @@ class FakebookCrawler:
 
     def __send_request(self, request):
         """ Send HTTP request and return parsed response. """
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = ssl.wrap_socket(so)
         sock.connect((HOST, PORT))
         sock.send(request.encode())
         response_data = sock.recv(BUFFER).decode()
@@ -173,6 +175,7 @@ class FakebookCrawler:
 
         while len(unvisited_pages) > 0:
             next_page_url = unvisited_pages.popleft()
+            # print('next page to read: ', next_page_url)
 
             try:
                 get_page_response = self.__get(next_page_url)
@@ -183,23 +186,26 @@ class FakebookCrawler:
                 if status == SUCCESS:
                     # Parse HTML.
                     html = get_page_response[BODY]
-                    html_parser = FakebookHTMLParser()
-                    html_parser.feed(html)
+                    if html is not None:
+                        # print('HTML: ', html)
+                        # print('-------------------------')
+                        html_parser = FakebookHTMLParser()
+                        html_parser.feed(html)
 
-                    # Only crawl the target domain.
-                    links = html_parser.links
-                    filtered_links = list(filter(lambda link: "/fakebook/" in link, links))
-                    for link in filtered_links:
-                        link_url = f"http://{HOST}{link}"
-                        if link_url not in visisted_pages and link_url not in unvisited_pages:
-                            unvisited_pages.append(link_url)
+                        # Only crawl the target domain.
+                        links = html_parser.links
+                        filtered_links = list(filter(lambda link: "/fakebook/" in link, links))
+                        for link in filtered_links:
+                            link_url = f"http://{HOST}{link}"
+                            if link_url not in visisted_pages and link_url not in unvisited_pages:
+                                unvisited_pages.append(link_url)
 
-                    # Get any flags for page.
-                    secret_flags.extend(html_parser.secret_flags)
-                    # Terminate if 5 flags are found.
-                    if len(secret_flags) == 5:
-                        return secret_flags
-                elif status == MOVED or status == REDIRECT:
+                        # Get any flags for page.
+                        secret_flags.extend(html_parser.secret_flags)
+                        # Terminate if 5 flags are found.
+                        if len(secret_flags) == 5:
+                            return secret_flags
+                elif status == FOUND or status == REDIRECT:
                     # Crawler tries the request again using the new URL given by the server in the Location header.
                     move_or_redirect_url = get_page_response[HEADERS]["Location"]
                     unvisited_pages.appendleft(move_or_redirect_url)
