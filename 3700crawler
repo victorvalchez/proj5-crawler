@@ -29,8 +29,8 @@ class CustomHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         if tag == "a":
-            for key, value in attrs:
-                if key == 'href':
+            for name, value in attrs:
+                if name == 'href':
                     self.crawler.feed_queue(value)
 
     def handle_data(self, data):
@@ -140,15 +140,7 @@ class Crawler:
         sock.close()
 
         return response_data
-
-    def get_cookies(self):
-        """Gets CSRF token and SessionID if possible"""
-        cookies = dict()
-        if self.csrftoken is not None:
-            cookies["csrftoken"] = self.csrftoken
-        if self.sessionid is not None:
-            cookies["sessionid"] = self.sessionid
-        return cookies
+        
 
     def send_login(self, url, content):
         """Send a POST request to log-in"""
@@ -162,15 +154,14 @@ class Crawler:
         user_agent = f"User-Agent: mavvCrawler/1.0{CRLF}"
         content_type = f"Content-Type: application/x-www-form-urlencoded{CRLF}"
         content_length = f"Content-Length: {len(content)}{CRLF}"
-        # Build request string
-        request = f"{post_request}{host}{from_line}{user_agent}{content_type}{content_length}{CRLF}{content}"
 
-        # Add cookies to the request
-        cookies = self.get_cookies()
-        if len(cookies) > 0:
-            cookies = '; '.join(f'{key}={value}' for key, value in cookies.items())
-            cookie_header = f"Cookie: {cookies}{CRLF}"
-            request = f"{post_request}{host}{from_line}{user_agent}{content_type}{content_length}{cookie_header}{CRLF}{content}"
+        # Add token to the request
+        token = f'csrftoken={self.csrftoken}'
+        cookie_header = f"Cookie: {token}{CRLF}"
+
+        # Build request string
+        request = f"{post_request}{host}{from_line}{user_agent}{content_type}{content_length}{cookie_header}{CRLF}{content}"
+        print(request)
 
         # Open SSL socket and send request
         so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -191,6 +182,7 @@ class Crawler:
         flags_found = False
 
         while len(self.queue) > 0 and not flags_found:  # If there are still pages to crawl...
+            print(self.flags)
             page = self.queue.popleft()
             # Send the http request and read the response
             response = self.send_get_and_receive(page)
