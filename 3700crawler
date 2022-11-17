@@ -2,26 +2,27 @@
 
 import argparse
 import socket
+import ssl
 from urllib.parse import urlparse
 from html.parser import HTMLParser
-import ssl
-
 from collections import deque
 
 DEFAULT_SERVER = "proj5.3700.network"
 DEFAULT_PORT = 443
 CRLF = "\r\n"
 
-BUFFER = 10000
+BUFFER = 100000
 
-# HTTP Status Codes
+# HTTP Status Codes According to Statement
 SUCCESS = 200
 FOUND = 302
 FORBIDDEN = 403
 NOT_FOUND = 404
 ERROR = 503
 
+
 class CustomHTMLParser(HTMLParser):
+    """Tweaked HTMLParser class to only add the corresponding urls or flags"""
     def __init__(self, crawler):
         HTMLParser.__init__(self)
         self.crawler = crawler
@@ -31,45 +32,45 @@ class CustomHTMLParser(HTMLParser):
             for key, value in attrs:
                 if key == 'href':
                     self.crawler.feed_queue(value)
-        
+
     def handle_data(self, data):
         if "FLAG: " in data:
             self.crawler.add_flag(data.split(": ")[1])
-	
 
 
 class Crawler:
+    """Crawler class that handles all functionality"""
     def __init__(self, args):
         self.server = args.server
         self.port = args.port
         self.username = args.username
         self.password = args.password
-      
+
         self.csrftoken = None
         self.sessionid = None
 
-        self.visited = set() #set of pages already crawled or pending to crawl
-        self.queue = deque() #queue of pages pending to crawl
-		
-        self.flags = []
+        self.visited = set()  # Set of pages already crawled or pending to crawl
+        self.queue = deque()  # Queue of pages pending to crawl
+
+        self.flags = []  # List to store all the retrieved flags
 
     def feed_queue(self, link):
-		# we only crawl URLs on the specified server
+        """Add URL to the queue of pages left to visit"""
+        # We only crawl URLs on the specified server
         if "/fakebook/" in link:
-            full_link = f"http://{self.server}{link}"
-			
+            full_link = f"https://{self.server}{link}"
+
             if full_link not in self.visited:
                 self.queue.append(full_link)
-                #value is in the queue so there's no need to add it again in the future
-                self.visited.add(full_link) 
-				
+                # Value is in the queue so there's no need to add it again in the future
+                self.visited.add(full_link)
 
     def add_flag(self, flag):
-        self.flags.add(flag)
-		
+        """Add flag to the list of flags"""
+        self.flags.append(flag)
 
     def parse_response(self, res):
-        """ Parse raw HTTP response. """
+        """Creates a dictionary with the parsed response"""
         res = res.strip().split(2 * CRLF)
         response = dict()
         response["body"] = res[-1] if len(res) > 1 else None
@@ -92,47 +93,45 @@ class Crawler:
         return response
 
     def login(self):
-        login_form = f"http://{self.server}:{self.port}/accounts/login/?next=/fakebook/"
+        """Handles the log-in to Fakebook"""
+        login_form = f"https://{self.server}/accounts/login/?next=/fakebook/"
         get_response_str = self.send_get_and_receive(login_form)
         get_respond = self.parse_response(get_response_str)
 
-		# Get CSRF token cookie.
+        # Get CSRF
         for cookie in get_respond["cookies"]:
             if "csrftoken" in cookie:
                 self.csrftoken = cookie.split("; ")[0].split("=")[1]
         assert self.csrftoken is not None, "ERROR: Failed to get CSRF token from login page."
 
-        # Log in and get session cookie.
+        # Get session cookie
         login_content = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={self.csrftoken}&next="
         send_login = self.send_login(login_form, login_content)
-
-        print(send_login)
         send_login_parsed = self.parse_response(send_login)
-        
-
         for cookie in send_login_parsed["cookies"]:
             if "sessionid" in cookie:
                 self.sessionid = cookie.split("; ")[0].split("=")[1]
         assert self.sessionid is not None, "ERROR: Failed to get Session ID after login."
-		
 
     def send_get_and_receive(self, url):
+        """Sends GET request and receives a response"""
         # Check if we can access that domain
         if self.server not in url:
-          return -1  # '[ERROR]: Cannot Crawl Outside The Target Domain'
-			
+            return -1  # '[ERROR]: Cannot Crawl Outside The Target Domain'
+
         url_parsed = urlparse(url)
 
         get_request = f"GET {url_parsed.path} HTTP/1.1{CRLF}"
         host = f"Host: {url_parsed.netloc}{CRLF}"
 
-        # Add cookies.
+        # Add cookies if possible
         request = f"{get_request}{host}{CRLF}"
         if self.csrftoken is not None and self.sessionid is not None:
             cookies = f"csrftoken={self.csrftoken}; sessionid={self.sessionid}"
             cookie_header = f"Cookie: {cookies}{CRLF}"
             request = f"{get_request}{host}{cookie_header}{CRLF}"
 
+        # Open SSL socket and send the request
         so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock = ssl.wrap_socket(so)
         sock.connect((self.server, self.port))
@@ -142,27 +141,38 @@ class Crawler:
 
         return response_data
 
+    def get_cookies(self):
+        """Gets CSRF token and SessionID if possible"""
+        cookies = dict()
+        if self.csrftoken is not None:
+            cookies["csrftoken"] = self.csrftoken
+        if self.sessionid is not None:
+            cookies["sessionid"] = self.sessionid
+        return cookies
+
     def send_login(self, url, content):
-        """ Send a HTTP/1.1 POST request. """
-        if self.server not in url:
-            return -1 # '[ERROR]: Cannot Crawl Outside The Target Domain'
+        """Send a POST request to log-in"""
+        assert self.server in url, f"ERROR: Crawler should only traverse URLs that point to pages on {self.server}"
         url = urlparse(url)
 
-        # Create HTTP initial request line and headers.
+        # Make all the parts of the request
         post_request = f"POST {url.path} HTTP/1.1{CRLF}"
         host = f"Host: {url.netloc}{CRLF}"
         from_line = f"From: valenciasanchez.v@northeastern.edu{CRLF}"
-        user_agent = f"User-Agent: cs3700-webcrawler/1.0{CRLF}"
+        user_agent = f"User-Agent: mavvCrawler/1.0{CRLF}"
         content_type = f"Content-Type: application/x-www-form-urlencoded{CRLF}"
         content_length = f"Content-Length: {len(content)}{CRLF}"
-
-        # Add cookies.
+        # Build request string
         request = f"{post_request}{host}{from_line}{user_agent}{content_type}{content_length}{CRLF}{content}"
-        if self.csrftoken is not None and self.sessionid is not None:
-            cookies = f"csrftoken={self.csrftoken}; sessionid={self.sessionid}"
+
+        # Add cookies to the request
+        cookies = self.get_cookies()
+        if len(cookies) > 0:
+            cookies = '; '.join(f'{key}={value}' for key, value in cookies.items())
             cookie_header = f"Cookie: {cookies}{CRLF}"
             request = f"{post_request}{host}{from_line}{user_agent}{content_type}{content_length}{cookie_header}{CRLF}{content}"
 
+        # Open SSL socket and send request
         so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock = ssl.wrap_socket(so)
         sock.connect((self.server, self.port))
@@ -173,51 +183,54 @@ class Crawler:
         return response_data
 
     def run(self):
+        """Handles the crawler loop"""
         self.login()
 
-        self.queue.append(f"http://{self.server}/fakebook/")
+        self.queue.append(f"https://{self.server}/fakebook/")
 
-        flags_founded = False
+        flags_found = False
 
-        while len(self.queue) > 0 and not flags_founded: #if there are still pages to crawl...
-            print("COLA: " , self.queue)
+        while len(self.queue) > 0 and not flags_found:  # If there are still pages to crawl...
             page = self.queue.popleft()
-
-            #send the http request and read the response
-            print("HASTA AQUI")
+            # Send the http request and read the response
             response = self.send_get_and_receive(page)
 
+            # If there was no error
             if response != -1:
-                #parse the response into a dictonary
+                # Parse the response into a dictonary
                 response_dict = self.parse_response(response)
 
                 if response_dict['status'] == SUCCESS:
-                    #parse, feed queue and add flags if founded
+                    # Parse, feed queue and add flags if founded
                     custom_parser = CustomHTMLParser(self)
-                    custom_parser.feed(response_dict['body'])
-                        
+                    if response_dict['body'] is not None:
+                        custom_parser.feed(response_dict['body'])
+
                     if len(self.flags) == 5:
-                        flags_founded = True
+                        flags_found = True
 
                 elif response_dict['status'] == FOUND:
-                    print("FOUND")
-                    self.feed_queue(response_dict['headers']['Location'])
+                    self.queue.appendleft(response_dict['headers']['Location'])
                     self.visited.add(response_dict['headers']['Location'])
 
                 elif response_dict['status'] == FORBIDDEN or response_dict['status'] == NOT_FOUND:
-                    #abandon the URL
+                    # Abandon the URL
                     pass
 
                 elif response_dict['status'] == ERROR:
-                    #re-try the request until it is successful
+                    # Re-try the request until it is successful
                     self.queue.append(page)
 
                 else:
-                    print(f"Unrecognized status : {response_dict['status']}")	
+                    raise Exception(f"Unrecognized status : {response_dict['status']}")
 
             else:
-                print('[ERROR]: Cannot Crawl Outside The Target Domain')
-            
+                raise Exception('[ERROR]: Cannot Crawl Outside The Target Domain')
+
+        # If we got all flags, print them
+        if flags_found:
+            for i in self.flags:
+                print(i)
 
 
 if __name__ == "__main__":
@@ -227,5 +240,5 @@ if __name__ == "__main__":
     parser.add_argument('username', type=str, help="The username to use")
     parser.add_argument('password', type=str, help="The password to use")
     args = parser.parse_args()
-    sender = Crawler(args)
-    sender.run()
+    crawl = Crawler(args)
+    crawl.run()
