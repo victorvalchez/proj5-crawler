@@ -14,11 +14,11 @@ CRLF = "\r\n"
 BUFFER = 100000
 
 # HTTP Status Codes According to Statement
-SUCCESS = 200
+OK = 200
 FOUND = 302
 FORBIDDEN = 403
 NOT_FOUND = 404
-ERROR = 503
+UNAVAILABLE = 503
 
 
 class CustomHTMLParser(HTMLParser):
@@ -192,7 +192,7 @@ class Crawler:
                 # Parse the response into a dictonary
                 response_dict = self.parse_response(response)
 
-                if response_dict['status'] == SUCCESS:
+                if response_dict['status'] == OK:
                     # Parse, feed queue and add flags if founded
                     custom_parser = CustomHTMLParser(self)
                     if response_dict['body'] is not None:
@@ -209,7 +209,7 @@ class Crawler:
                     # Abandon the URL
                     pass
 
-                elif response_dict['status'] == ERROR:
+                elif response_dict['status'] == UNAVAILABLE:
                     # Re-try the request until it is successful
                     self.queue.append(page)
 
